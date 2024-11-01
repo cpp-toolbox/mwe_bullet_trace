@@ -22,3 +22,9 @@
 [submodule "src/shader_standard"]
 	path = src/shader_standard
 	url = git@github.com:cpp-toolbox/shader_standard.git
+[submodule "src/draw_info"]
+	path = src/draw_info
+	url = git@github.com:cpp-toolbox/draw_info.git
+[submodule "src/transform"]
+	path = src/transform
+	url = git@github.com:cpp-toolbox/transform.git
