@@ -28,3 +28,12 @@
 [submodule "src/transform"]
 	path = src/transform
 	url = git@github.com:cpp-toolbox/transform.git
+[submodule "src/mouse"]
+	path = src/mouse
+	url = git@github.com:cpp-toolbox/mouse.git
+[submodule "src/glfw_lambda_callback_manager"]
+	path = src/glfw_lambda_callback_manager
+	url = git@github.com:cpp-toolbox/glfw_lambda_callback_manager.git
+[submodule "src/fps_camera"]
+	path = src/fps_camera
+	url = git@github.com:cpp-toolbox/fps_camera.git
