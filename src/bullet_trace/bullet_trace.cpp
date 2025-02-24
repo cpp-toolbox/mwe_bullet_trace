@@ -7,9 +7,11 @@
  * moving at the same rate.
  */
 BulletTrace::BulletTrace(glm::vec3 start_pos, glm::vec3 travel_dir, float travel_speed)
-    : start_pos(start_pos), travel_dir(glm::normalize(travel_dir)), travel_speed(travel_speed) {}
+    : start_pos(start_pos), travel_dir(glm::normalize(travel_dir)), travel_speed(travel_speed) {
+    transform.position = start_pos;
+}
 
-IndexedVertexPositions BulletTrace::get_trace_rect(double delta_time_sec, glm::vec3 cam_pos) {
+draw_info::IndexedVertexPositions BulletTrace::get_trace_rect(double delta_time_sec, glm::vec3 cam_pos) {
     time_since_fire_sec += delta_time_sec;
     float height = time_since_fire_sec * travel_speed;
     float offset = 0;
@@ -34,9 +36,14 @@ IndexedVertexPositions BulletTrace::get_trace_rect(double delta_time_sec, glm::v
     // calculate the direction from the camera to the center of the rectangle
     glm::vec3 cam_to_center = glm::normalize(center_of_rect - cam_pos);
 
+    transform.position = center_of_rect;
+    // TODO: why is scale inverted?
+    transform.scale.y = width;
+    transform.scale.x = height;
+
     // calculate the height direction (perpendicular to travel_dir and cam_to_center)
     glm::vec3 height_dir = glm::normalize(glm::cross(travel_dir, cam_to_center));
 
-    return {generate_rectangle_indices(),
-            generate_rectangle_vertices_3d(center_of_rect, travel_dir, height_dir, width, height)};
+    return {vertex_geometry::generate_rectangle_indices(),
+            vertex_geometry::generate_rectangle_vertices_3d(center_of_rect, travel_dir, height_dir, width, height)};
 }

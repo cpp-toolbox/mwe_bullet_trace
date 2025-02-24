@@ -13,6 +13,9 @@
 #include "fps_camera/fps_camera.hpp"
 #include "bullet_trace/bullet_trace.hpp"
 
+#include "input/input_state/input_state.hpp"
+#include "utility/temporal_binary_signal/temporal_binary_signal.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
@@ -39,7 +42,7 @@ class Minigun {
         std::srand(static_cast<unsigned>(std::time(0))); // Seed random number generator
     }
 
-    std::vector<IndexedVertexPositions> update(float delta_time_sec, glm::vec3 cam_pos) {
+    std::vector<draw_info::IndexedVertexPositions> update(float delta_time_sec, glm::vec3 cam_pos) {
         time_since_last_fire += delta_time_sec;
 
         // Check if it's time to fire a new bullet
@@ -52,11 +55,11 @@ class Minigun {
         }
 
         // Prepare to collect drawing positions for each active bullet
-        std::vector<IndexedVertexPositions> drawing_positions;
+        std::vector<draw_info::IndexedVertexPositions> drawing_positions;
 
         // Update each bullet and collect its drawing positions
         for (auto &bullet : bullets) {
-            IndexedVertexPositions trace_data = bullet.get_trace_rect(delta_time_sec, cam_pos);
+            draw_info::IndexedVertexPositions trace_data = bullet.get_trace_rect(delta_time_sec, cam_pos);
             drawing_positions.push_back(trace_data); // Add the drawing data for this bullet
         }
 
@@ -111,13 +114,8 @@ std::vector<unsigned int> indices = {
     1, 2, 3  // second Triangle
 };
 
-// Wrapper that automatically creates a lambda for member functions
-template <typename T, typename R, typename... Args> auto wrap_member_function(T &obj, R (T::*f)(Args...)) {
-    // Return a std::function that wraps the member function in a lambda
-    return std::function<R(Args...)>{[&obj, f](Args &&...args) { return (obj.*f)(std::forward<Args>(args)...); }};
-}
-
 int main() {
+
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     console_sink->set_level(spdlog::level::debug);
     auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("mwe_shader_cache_logs.txt", true);
@@ -129,19 +127,39 @@ int main() {
     GLFWwindow *window = initialize_glfw_glad_and_return_window(&SCREEN_WIDTH, &SCREEN_HEIGHT, "glfw window",
                                                                 fullscreen, false, false, &live_input_state);
 
-    FPSCamera camera(glm::vec3(0, 0, 3), 50, SCREEN_WIDTH, SCREEN_HEIGHT, 90, 0.1, 50);
+    InputState input_state;
+
+    FPSCamera camera(glm::vec3(0, 0, 3), 1, SCREEN_WIDTH, SCREEN_HEIGHT, 90, 0.1, 50);
+
     std::function<void(unsigned int)> char_callback = [](unsigned int _) {};
-    std::function<void(int, int, int, int)> key_callback = [](int _, int _1, int _2, int _3) {};
-    std::function<void(double, double)> mouse_pos_callback = wrap_member_function(camera, &FPSCamera::mouse_callback);
-    std::function<void(int, int, int)> mouse_button_callback = [](int _, int _1, int _2) {};
+    std::function<void(int, int, int, int)> key_callback = [&](int key, int scancode, int action, int mods) {
+        input_state.glfw_key_callback(key, scancode, action, mods);
+    };
+    std::function<void(double, double)> mouse_pos_callback = [&](double x_pos, double y_pos) {
+        camera.mouse_callback(x_pos, y_pos);
+    };
+    std::function<void(int, int, int)> mouse_button_callback = [&](int button, int action, int mods) {
+        input_state.glfw_mouse_button_callback(button, action, mods);
+    };
     GLFWLambdaCallbackManager glcm(window, char_callback, key_callback, mouse_pos_callback, mouse_button_callback);
 
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); // Hide and capture the mouse
 
-    std::vector<ShaderType> requested_shaders = {ShaderType::ABSOLUTE_POSITION_WITH_SOLID_COLOR,
-                                                 /*ShaderType::TRANSFORM_V_WITH_TEXTURES,*/
-                                                 ShaderType::CWL_V_TRANSFORMATION_WITH_TEXTURES,
-                                                 ShaderType::CWL_V_TRANSFORMATION_WITH_SOLID_COLOR};
+    std::vector<ShaderType> requested_shaders = {ShaderType::CWL_V_TRANSFORMATION_WITH_SOLID_COLOR,
+                                                 ShaderType::CWL_V_TRANSFORMATION_USING_UBOS_WITH_SOLID_COLOR};
+
+    GLuint ltw_matrices_gl_name;
+    glm::mat4 ltw_matrices[1024];
+
+    // initialize all matrices to identity matrices
+    for (int i = 0; i < 1024; ++i) {
+        ltw_matrices[i] = glm::mat4(1.0f);
+    }
+
+    glGenBuffers(1, &ltw_matrices_gl_name);
+    glBindBuffer(GL_UNIFORM_BUFFER, ltw_matrices_gl_name);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(ltw_matrices), ltw_matrices, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, ltw_matrices_gl_name);
 
     ShaderCache shader_cache(requested_shaders, sinks);
     Batcher batcher(shader_cache);
@@ -152,19 +170,30 @@ int main() {
     shader_cache.set_uniform(ShaderType::CWL_V_TRANSFORMATION_WITH_SOLID_COLOR, ShaderUniformVariable::RGBA_COLOR,
                              color);
 
+    auto ubo_verts = vertex_geometry::generate_square_vertices(0, 0, .8);
+    auto ubo_indices = vertex_geometry::generate_square_indices();
+    glm::vec4 ubo_color = glm::vec4(1, .25, .25, 1);
+    shader_cache.set_uniform(ShaderType::CWL_V_TRANSFORMATION_USING_UBOS_WITH_SOLID_COLOR,
+                             ShaderUniformVariable::RGBA_COLOR, ubo_color);
+
     glm::vec3 fire_direction = glm::vec3(1, 0, 0); // Adjust as needed for your game
     float fire_rate = 10.0f;                       // 10 bullets per second
     Minigun minigun(glm::vec3(1, 1, 1), fire_direction, fire_rate);
 
     double previous_time = glfwGetTime();
 
+    float minigun_timescale = 1;
+
     while (!glfwWindowShouldClose(window)) {
 
         double current_time = glfwGetTime();
-        double delta_time = current_time - previous_time;
+        double delta_time = (current_time - previous_time);
         previous_time = current_time;
 
-        camera.process_input(window, delta_time);
+        camera.process_input(input_state.is_pressed(EKey::LEFT_CONTROL), input_state.is_pressed(EKey::TAB),
+                             input_state.is_pressed(EKey::w), input_state.is_pressed(EKey::a),
+                             input_state.is_pressed(EKey::s), input_state.is_pressed(EKey::d),
+                             input_state.is_pressed(EKey::SPACE), input_state.is_pressed(EKey::LEFT_SHIFT), delta_time);
 
         glfwGetFramebufferSize(window, &width, &height);
 
@@ -172,7 +201,7 @@ int main() {
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        auto bullet_positions = minigun.update(delta_time, camera.transform.position);
+        auto bullet_positions = minigun.update(delta_time * minigun_timescale, camera.transform.position);
 
         glm::mat4 projection = camera.get_projection_matrix();
         glm::mat4 view = camera.get_view_matrix();
@@ -185,20 +214,50 @@ int main() {
         shader_cache.set_uniform(ShaderType::CWL_V_TRANSFORMATION_WITH_SOLID_COLOR,
                                  ShaderUniformVariable::LOCAL_TO_WORLD, glm::mat4(1.0));
 
+        shader_cache.set_uniform(ShaderType::CWL_V_TRANSFORMATION_USING_UBOS_WITH_SOLID_COLOR,
+                                 ShaderUniformVariable::CAMERA_TO_CLIP, projection);
+        shader_cache.set_uniform(ShaderType::CWL_V_TRANSFORMATION_USING_UBOS_WITH_SOLID_COLOR,
+                                 ShaderUniformVariable::WORLD_TO_CAMERA, view);
+
+        int id = 0;
         for (const auto &bullet_position : bullet_positions) {
-            batcher.cwl_v_transformation_with_solid_color_shader_batcher.queue_draw(bullet_position.indices,
-                                                                                    bullet_position.xyz_positions);
+
+            batcher.cwl_v_transformation_with_solid_color_shader_batcher.queue_draw(
+                id, bullet_position.indices, bullet_position.xyz_positions, true);
+
+            auto bullet = minigun.bullets[id];
+            auto bullet_transform = bullet.transform;
+            glm::vec3 camera_to_bullet = bullet.transform.position - camera.transform.position;
+            glm::mat4 billboard_transform =
+                create_billboard_transform_with_lock_axis(bullet.travel_dir, camera_to_bullet);
+
+            glm::mat4 transform = bullet.transform.get_translation_transform_matrix() * billboard_transform *
+                                  bullet.transform.get_scale_transform_matrix();
+
+            ltw_matrices[id] = transform;
+            std::vector<unsigned int> ltw_ids(ubo_verts.size(), id);
+            batcher.cwl_v_transformation_using_ubos_with_solid_color_shader_batcher.queue_draw(
+                id, ubo_indices, ubo_verts, ltw_ids, false);
+
+            id++;
         }
 
-        auto unit_square = generate_square_vertices(0, 0, 1);
-        auto square_indices = generate_rectangle_indices();
+        auto unit_square = vertex_geometry::generate_square_vertices(0, 0, 1);
+        auto square_indices = vertex_geometry::generate_rectangle_indices();
 
         Transform unit_square_transform;
         unit_square_transform.position = glm::vec3(0, 0, -1);
 
-        batcher.cwl_v_transformation_with_solid_color_shader_batcher.queue_draw(square_indices, unit_square);
+        glBindBuffer(GL_UNIFORM_BUFFER, ltw_matrices_gl_name);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(ltw_matrices), ltw_matrices);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+        batcher.cwl_v_transformation_with_solid_color_shader_batcher.queue_draw(999, square_indices, unit_square);
         /*batcher.cwl_v_transformation_with_solid_color_shader_batcher.queue_draw(ivp.indices, ivp.xyz_positions);*/
         batcher.cwl_v_transformation_with_solid_color_shader_batcher.draw_everything();
+        batcher.cwl_v_transformation_using_ubos_with_solid_color_shader_batcher.draw_everything();
+
+        TemporalBinarySignal::process_all();
 
         glfwSwapBuffers(window);
         glfwPollEvents();

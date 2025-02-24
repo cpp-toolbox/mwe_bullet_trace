@@ -12,6 +12,8 @@
  */
 class BulletTrace {
   public:
+    Transform transform;
+
     glm::vec3 start_pos;
     glm::vec3 travel_dir;
     float time_since_fire_sec = 0;
@@ -23,7 +25,7 @@ class BulletTrace {
 
     BulletTrace(glm::vec3 start_pos, glm::vec3 travel_dir, float travel_speed);
 
-    IndexedVertexPositions get_trace_rect(double delta_time_sec, glm::vec3 cam_pos);
+    draw_info::IndexedVertexPositions get_trace_rect(double delta_time_sec, glm::vec3 cam_pos);
 };
 
 #endif // BULLET_TRACE_HPP
