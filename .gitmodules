@@ -49,3 +49,6 @@
 [submodule "src/utility/expiring_temporal_vector"]
 	path = src/utility/expiring_temporal_vector
 	url = git@github.com:cpp-toolbox/expiring_temporal_vector.git
+[submodule "src/bullet_trace"]
+	path = src/bullet_trace
+	url = git@github.com:frag-z/bullet_trace.git
